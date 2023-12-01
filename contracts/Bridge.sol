@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-// import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import "./ChainIDs.sol";
 import "./TokenIDs.sol";
@@ -18,7 +20,12 @@ import "./TokenIDs.sol";
 // }
 
 // Bridge contract
-contract Bridge {
+contract Bridge is ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
+    // uint8 private immutable version;
+    uint8 private version;
+
     bool public paused;
 
     uint16 public constant MAX_TOTAL_WEIGHT = 10000;
@@ -150,5 +157,66 @@ contract Bridge {
         }
         // Return the address that signed the hash
         return ecrecover(hash, v, r, s);
+    }
+
+    // https://github.com/anoma/ethereum-bridge/blob/main/src/Bridge.sol#L279
+    function _isValidSignature(
+        address _signer,
+        bytes32 _messageHash,
+        // Signature calldata _signature
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) internal pure returns (bool) {
+        bytes32 messageDigest;
+        assembly ("memory-safe") {
+            let scratch := mload(0x40)
+
+            mstore(scratch, "\x19Ethereum Signed Message:\n32\x00\x00\x00\x00")
+            mstore(add(scratch, 28), _messageHash)
+
+            messageDigest := keccak256(scratch, 60)
+        }
+        (address recovered, ECDSA.RecoverError error, ) = ECDSA.tryRecover(
+            messageDigest,
+            v,
+            r,
+            s
+        );
+        return error == ECDSA.RecoverError.NoError && recovered == _signer;
+    }
+
+    function _computeTransferHash(
+        // Erc20Transfer calldata transfer
+        bytes32 dataDigest,
+        uint256 amount,
+        address from,
+        address to
+    ) internal view returns (bytes32) {
+        return
+            keccak256(
+                abi.encode(version, "transfer", from, to, amount, dataDigest)
+            );
+    }
+
+    // https://github.com/Gravity-Bridge/Gravity-Bridge/blob/main/solidity/contracts/Gravity.sol#L153
+
+    // This represents a validator signature
+    struct Signature {
+        uint8 v;
+        bytes32 r;
+        bytes32 s;
+    }
+
+    // Utility function to verify geth style signatures
+    function verifyGethStyleSignature(
+        address _signer,
+        bytes32 _theHash,
+        Signature calldata _sig
+    ) private pure returns (bool) {
+        bytes32 messageDigest = keccak256(
+            abi.encodePacked("\x19Ethereum Signed Message:\n32", _theHash)
+        );
+        return _signer == ECDSA.recover(messageDigest, _sig.v, _sig.r, _sig.s);
     }
 }

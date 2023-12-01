@@ -1,6 +1,7 @@
 import "@nomicfoundation/hardhat-ethers";
 import "@nomicfoundation/hardhat-toolbox";
 import "@openzeppelin/hardhat-upgrades";
+// import "@openzeppelin/hardhat-defender";
 import { HardhatUserConfig } from "hardhat/config";
 import { alchemyApiKey, mnemonic } from "./secrets.json";
 
@@ -38,6 +39,10 @@ const config: HardhatUserConfig = {
       accounts: { mnemonic: mnemonic },
     },
   },
+  // defender: {
+  //   apiKey: process.env.API_KEY,
+  //   apiSecret: process.env.API_SECRET,
+  // },
 };
 
 export default config;
