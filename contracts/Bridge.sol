@@ -25,7 +25,7 @@ contract Bridge is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // uint8 private immutable version;
-    uint8 private version;
+    // uint8 private version;
 
     bool public paused;
 
@@ -39,9 +39,9 @@ contract Bridge is ReentrancyGuard {
         uint8 version;
         uint8 sourceChain;
         uint64 bridgeSeqNum;
-        address sender_address;
-        uint8 target_chain;
-        address target_address;
+        address senderAddress;
+        uint8 targetChain;
+        address targetAddress;
         bytes payload;
     }
 
@@ -170,9 +170,55 @@ contract Bridge is ReentrancyGuard {
     }
 
     function verifySignature(
+        address sender,
+        uint8 messageType,
+        uint8 version,
+        uint8 sourceChain,
+        uint64 bridgeSeqNum,
+        address senderAddress,
+        uint8 targetChain,
+        address targetAddress,
+        bytes memory payload,
+        bytes memory signature
+    ) public pure returns (bool) {
+        // Recover the signer from the hash and the signature
+        address signer = recoverSigner(
+            // Hash the parameters
+            computeHash(
+                messageType,
+                version,
+                sourceChain,
+                bridgeSeqNum,
+                senderAddress,
+                targetChain,
+                targetAddress,
+                payload
+            ),
+            signature
+        );
+        // Return true if the signer is the sender
+        return (signer == sender);
+    }
+
+    // https://github.com/Gravity-Bridge/Gravity-Bridge/blob/main/solidity/contracts/Gravity.sol#L153
+    // Utility function to verify geth style signatures
+    function verifySignature(
+        address _signer,
+        bytes32 _theHash,
+        bytes memory signature
+    ) public pure returns (bool) {
+        bytes32 messageDigest = keccak256(
+            abi.encodePacked("\x19Ethereum Signed Message:\n32", _theHash)
+        );
+        // Signature calldata _sig
+        // return _signer == ECDSA.recover(messageDigest, _sig.v, _sig.r, _sig.s);
+        return _signer == ECDSA.recover(messageDigest, signature);
+    }
+
+    function verifySignature(
         string memory message,
         bytes memory signature
-    ) external pure returns (address, ECDSA.RecoverError, bytes32) {
+    ) public pure returns (address, ECDSA.RecoverError, bytes32) {
         // https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/utils/cryptography/MessageHashUtils.sol#L49
         bytes32 signedMessageHash = MessageHashUtils.toEthSignedMessageHash(
             bytes(message)
@@ -188,7 +234,7 @@ contract Bridge is ReentrancyGuard {
         uint256 amount,
         uint256 nonce,
         bytes memory signature
-    ) internal view returns (bool) {
+    ) public view returns (bool) {
         // Hash the parameters with the chain ID
         bytes32 hash = keccak256(
             abi.encodePacked(sender, recipient, amount, nonce, block.chainid)
@@ -203,7 +249,7 @@ contract Bridge is ReentrancyGuard {
     function recoverSigner(
         bytes32 hash,
         bytes memory signature
-    ) internal pure returns (address) {
+    ) public pure returns (address) {
         // Check the signature length
         require(signature.length == 65, "Invalid signature length");
         // Divide the signature into r, s and v variables
@@ -224,9 +270,7 @@ contract Bridge is ReentrancyGuard {
         address _signer,
         bytes32 _messageHash,
         // Signature calldata _signature
-        uint8 v,
-        bytes32 r,
-        bytes32 s
+        bytes memory signature
     ) internal pure returns (bool) {
         bytes32 messageDigest;
         assembly ("memory-safe") {
@@ -239,23 +283,33 @@ contract Bridge is ReentrancyGuard {
         }
         (address recovered, ECDSA.RecoverError error, ) = ECDSA.tryRecover(
             messageDigest,
-            v,
-            r,
-            s
+            signature
         );
         return error == ECDSA.RecoverError.NoError && recovered == _signer;
     }
 
-    function _computeTransferHash(
-        // Erc20Transfer calldata transfer
-        bytes32 dataDigest,
-        uint256 amount,
-        address from,
-        address to
-    ) internal view returns (bytes32) {
+    function computeHash(
+        uint8 messageType,
+        uint8 version,
+        uint8 sourceChain,
+        uint64 bridgeSeqNum,
+        address senderAddress,
+        uint8 targetChain,
+        address targetAddress,
+        bytes memory payload
+    ) internal pure returns (bytes32) {
         return
             keccak256(
-                abi.encode(version, "transfer", from, to, amount, dataDigest)
+                abi.encode(
+                    messageType,
+                    version,
+                    sourceChain,
+                    bridgeSeqNum,
+                    senderAddress,
+                    targetChain,
+                    targetAddress,
+                    payload
+                )
             );
     }
 
