@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 import "./ChainIDs.sol";
 import "./TokenIDs.sol";
@@ -31,6 +32,29 @@ contract Bridge is ReentrancyGuard {
     uint16 public constant MAX_TOTAL_WEIGHT = 10000;
     uint256 public constant MAX_SINGLE_VALIDATOR_WEIGHT = 1000;
     uint256 public constant APPROVAL_THRESHOLD = 3333;
+
+    struct BridgeMessage {
+        // 0: token , 1: object ? TBD
+        uint8 messageType;
+        uint8 version;
+        uint8 sourceChain;
+        uint64 bridgeSeqNum;
+        address sender_address;
+        uint8 target_chain;
+        address target_address;
+        bytes payload;
+    }
+
+    // struct ApprovedBridgeMessage has store {
+    //     message: BridgeMessage,
+    //     approved_epoch: u64,
+    //     signatures: vector<vector<u8>>,
+    // }
+
+    // struct BridgeMessageKey has copy, drop, store {
+    //     source_chain: u8,
+    //     bridge_seq_num: u64
+    // }
 
     // A struct to represent a validator
     struct Validator {
@@ -61,6 +85,8 @@ contract Bridge is ReentrancyGuard {
         uint256 amount,
         uint256 nonce
     );
+
+    event BridgeEvent(BridgeMessage message, bytes message_bytes);
 
     // Function to initiate a transfer from the source chain to the destination chain
     // function initiateTransfer(address recipient, uint256 amount) external {
@@ -119,6 +145,40 @@ contract Bridge is ReentrancyGuard {
     // address[] memory signers
     {
         paused = false;
+    }
+
+    function initialize() public {
+        // addValidator(firstPK, firstWeight);
+        paused = false;
+    }
+
+    // Check also weight. i.e. no more than 33% of the total weight
+    // A function to add a validator
+    function addValidator(address _pk, uint256 _weight) private {
+        // Check if the address is not zero
+        require(_pk != address(0), "Zero address.");
+        // Check if the address is not already a validator
+        require(validatorIndex[_pk] == 0, "Already a validator.");
+        // Add the validator to the array
+        validators.push(Validator(_pk, _weight));
+        // Update the validator index
+        validatorIndex[_pk] = validators.length;
+    }
+
+    function validatorsCount() public view returns (uint count) {
+        return validators.length;
+    }
+
+    function verifySignature(
+        string memory message,
+        bytes memory signature
+    ) external pure returns (address, ECDSA.RecoverError, bytes32) {
+        // https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/utils/cryptography/MessageHashUtils.sol#L49
+        bytes32 signedMessageHash = MessageHashUtils.toEthSignedMessageHash(
+            bytes(message)
+        );
+        // https://docs.openzeppelin.com/contracts/4.x/api/utils#ECDSA-tryRecover-bytes32-bytes-
+        return ECDSA.tryRecover(signedMessageHash, signature);
     }
 
     // Function to verify the signature of the transfer
