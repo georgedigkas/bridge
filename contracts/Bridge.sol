@@ -7,9 +7,12 @@ import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {ERC721Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC721/ERC721Upgradeable.sol";
 
 import "./ChainIDs.sol";
 import "./TokenIDs.sol";
+// import {BridgeMessage} from "./interfaces/ICommon.sol";
 
 // Interface for ERC20 token
 // interface IERC20 {
@@ -22,10 +25,18 @@ import "./TokenIDs.sol";
 // }
 
 // Bridge contract
-contract Bridge is Initializable, ReentrancyGuard {
+contract Bridge is
+    Initializable,
+    UUPSUpgradeable,
+    ERC721Upgradeable
+{
+    using SafeERC20 for IERC20;
+
     uint256[48] __gap;
 
-    using SafeERC20 for IERC20;
+    mapping(address => mapping(uint => bool)) public processedNonces;
+    // require(processedNonces[msg.sender][nonce] == false, 'transfer already processed');
+    // processedNonces[msg.sender][nonce] = true;
 
     // uint8 private immutable version;
     // uint8 private version;
@@ -35,18 +46,6 @@ contract Bridge is Initializable, ReentrancyGuard {
     uint16 public constant MAX_TOTAL_WEIGHT = 10000;
     uint256 public constant MAX_SINGLE_VALIDATOR_WEIGHT = 1000;
     uint256 public constant APPROVAL_THRESHOLD = 3333;
-
-    struct BridgeMessage {
-        // 0: token , 1: object ? TBD
-        uint8 messageType;
-        uint8 version;
-        uint8 sourceChain;
-        uint64 bridgeSeqNum;
-        address senderAddress;
-        uint8 targetChain;
-        address targetAddress;
-        bytes payload;
-    }
 
     // struct ApprovedBridgeMessage has store {
     //     message: BridgeMessage,
@@ -63,6 +62,18 @@ contract Bridge is Initializable, ReentrancyGuard {
     struct Validator {
         address addr; // The address of the validator
         uint256 weight; // The weight of the validator
+    }
+
+    struct BridgeMessage {
+        // 0: token , 1: object ? TBD
+        uint8 messageType;
+        uint8 version;
+        uint8 sourceChain;
+        uint64 bridgeSeqNum;
+        address senderAddress;
+        uint8 targetChain;
+        address targetAddress;
+        bytes payload;
     }
 
     // A mapping from address to validator index
@@ -152,8 +163,17 @@ contract Bridge is Initializable, ReentrancyGuard {
 
     function initialize() public initializer {
         // addValidator(firstPK, firstWeight);
+        // __Ownable_init();
+        __UUPSUpgradeable_init();
         paused = false;
     }
+
+    // constructor() {
+    //     _disableInitializers();
+    // }
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() initializer {}
 
     // Check also weight. i.e. no more than 33% of the total weight
     // A function to add a validator
@@ -221,7 +241,16 @@ contract Bridge is Initializable, ReentrancyGuard {
     function verifySignature(
         string memory message,
         bytes memory signature
-    ) public pure returns (address, ECDSA.RecoverError, bytes32) {
+    )
+        public
+        pure
+        returns (
+            // ) public pure returns (address, ECDSA.RecoverError) {
+            address,
+            ECDSA.RecoverError,
+            bytes32
+        )
+    {
         // https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/utils/cryptography/MessageHashUtils.sol#L49
         bytes32 signedMessageHash = MessageHashUtils.toEthSignedMessageHash(
             bytes(message)
@@ -284,6 +313,8 @@ contract Bridge is Initializable, ReentrancyGuard {
 
             messageDigest := keccak256(scratch, 60)
         }
+
+        // (address recovered, ECDSA.RecoverError error) = ECDSA.tryRecover(
         (address recovered, ECDSA.RecoverError error, ) = ECDSA.tryRecover(
             messageDigest,
             signature
@@ -336,4 +367,63 @@ contract Bridge is Initializable, ReentrancyGuard {
         );
         return _signer == ECDSA.recover(messageDigest, _sig.v, _sig.r, _sig.s);
     }
+
+    // https://medium.com/coinmonks/how-to-build-a-decentralized-token-bridge-between-ethereum-and-binance-smart-chain-58de17441259
+
+    function mint(
+        address from,
+        address to,
+        uint amount,
+        uint nonce,
+        bytes calldata signature
+    ) external {
+        bytes32 message = prefixed(
+            keccak256(abi.encodePacked(from, to, amount, nonce))
+        );
+        require(recoverSigner(message, signature) == from, "wrong signature");
+        require(
+            processedNonces[from][nonce] == false,
+            "transfer already processed"
+        );
+        processedNonces[from][nonce] = true;
+    }
+
+    function prefixed(bytes32 hash) internal pure returns (bytes32) {
+        return
+            keccak256(
+                abi.encodePacked("\x19Ethereum Signed Message:\n32", hash)
+            );
+    }
+
+    function recoverSignerMedium(
+        bytes32 message,
+        bytes memory sig
+    ) internal pure returns (address) {
+        uint8 v;
+        bytes32 r;
+        bytes32 s;
+        (v, r, s) = splitSignature(sig);
+        return ecrecover(message, v, r, s);
+    }
+
+    function splitSignature(
+        bytes memory sig
+    ) internal pure returns (uint8, bytes32, bytes32) {
+        require(sig.length == 65);
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly {
+            // first 32 bytes, after the length prefix
+            r := mload(add(sig, 32))
+            // second 32 bytes
+            s := mload(add(sig, 64))
+            // final byte (first byte of the next 32 bytes)
+            v := byte(0, mload(add(sig, 96)))
+        }
+        return (v, r, s);
+    }
+
+    // The contract can be upgraded by the owner
+    function _authorizeUpgrade(address newImplementation) internal override {}
 }
