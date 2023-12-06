@@ -22,6 +22,13 @@ const CONTRACT_INTERFACE = [
   "function approveBridgeMessage(BridgeMessage calldata bridgeMessage, bytes[] calldata signatures) public isRunning returns (bool, uint256)",
 ];
 
+enum ChainID {
+  SUI_CHAIN,
+  BTC_CHAIN,
+  ETH_CHAIN,
+  TMP_CHAIN,
+}
+
 // Write a test suite for the contract
 describe(CONTRACT_NAME, () => {
   // Deploy the contract before each test
@@ -299,7 +306,7 @@ describe(CONTRACT_NAME, () => {
     const bridgeMessage = {
       messageType: 1,
       version: 2,
-      sourceChain: 3,
+      sourceChain: ChainID.TMP_CHAIN,
       bridgeSeqNum: 4,
       senderAddress: "0x5567f54B29B973343d632f7BFCe9507343D41FCa",
       targetChain: 5,

@@ -6,6 +6,7 @@ contract ChainIDs {
     enum ChainID {
         SUI_CHAIN,
         BTC_CHAIN,
-        ETH_CHAIN
+        ETH_CHAIN,
+        TMP_CHAIN
     }
 }

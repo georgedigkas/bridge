@@ -26,7 +26,7 @@ import "./TokenIDs.sol";
 // }
 
 // Bridge contract
-contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
+contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable, ChainIDs {
     using SafeERC20 for IERC20;
     using MessageHashUtils for bytes32;
 
@@ -67,7 +67,7 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
         // 0: token , 1: object ? TBD
         uint8 messageType;
         uint8 version;
-        uint8 sourceChain;
+        ChainID sourceChain;
         uint64 bridgeSeqNum;
         address senderAddress;
         uint8 targetChain;
@@ -123,7 +123,7 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
         _;
     }
 
-    // modifier to check if bridge is running
+    // modifier to check if bridge is paused
     modifier isPaused() {
         // If the first argument of 'require' evaluates to 'false', execution terminates and all
         // changes to the state and to Ether balances are reverted.
@@ -188,6 +188,24 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
         table::add(&mut self.approved_messages, key, approved_message);
     }
  */
+
+    function testBridgeMessage(
+        BridgeMessage calldata bridgeMessage
+    )
+        public
+        pure
+        returns (uint8, uint8, ChainID, uint64, address, uint8, address)
+    {
+        return (
+            bridgeMessage.messageType,
+            bridgeMessage.version,
+            bridgeMessage.sourceChain,
+            bridgeMessage.bridgeSeqNum,
+            bridgeMessage.senderAddress,
+            bridgeMessage.targetChain,
+            bridgeMessage.targetAddress
+        );
+    }
 
     function approveBridgeMessage(
         BridgeMessage calldata bridgeMessage,
