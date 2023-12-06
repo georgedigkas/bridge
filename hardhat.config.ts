@@ -40,7 +40,10 @@ const config: HardhatUserConfig = {
     },
     goerlihh: {
       url: "https://rpc.ankr.com/eth_goerli",
-      chainId: 5
+      chainId: 5,
+    },
+    coverage: {
+      url: "http://127.0.0.1:8555",
     },
   },
   // defender: {

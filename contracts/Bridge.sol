@@ -32,9 +32,10 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
 
     uint256[48] __gap;
 
+    // require(recoverSigner(message, signature) == from, "wrong signature");
+    // require(processedNonces[from][nonce] == false, "transfer already processed");
+    // processedNonces[from][nonce] = true;
     mapping(address => mapping(uint => bool)) public processedNonces;
-    // require(processedNonces[msg.sender][nonce] == false, 'transfer already processed');
-    // processedNonces[msg.sender][nonce] = true;
 
     // uint8 private immutable version;
     // uint8 private version;
@@ -45,21 +46,21 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
     uint256 public constant MAX_SINGLE_VALIDATOR_WEIGHT = 1000;
     uint256 public constant APPROVAL_THRESHOLD = 3333;
 
-    // struct ApprovedBridgeMessage has store {
-    //     message: BridgeMessage,
-    //     approved_epoch: u64,
-    //     signatures: vector<vector<u8>>,
-    // }
-
-    // struct BridgeMessageKey has copy, drop, store {
-    //     source_chain: u8,
-    //     bridge_seq_num: u64
-    // }
-
     // A struct to represent a validator
     struct Validator {
         address addr; // The address of the validator
         uint256 weight; // The weight of the validator
+    }
+
+    struct ApprovedBridgeMessage {
+        BridgeMessage message;
+        uint64 approvedEpoch;
+        bytes[] signatures;
+    }
+
+    struct BridgeMessageKey {
+        uint8 sourceChain;
+        uint64 bridgeSeqNum;
     }
 
     struct BridgeMessage {
@@ -98,53 +99,14 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
         uint256 nonce
     );
 
+    // struct BridgeEvent has copy, drop {
+    //     message: BridgeMessage,
+    //     message_bytes: vector<u8>
+    // }
     event BridgeEvent(BridgeMessage message, bytes message_bytes);
 
-    // Function to initiate a transfer from the source chain to the destination chain
-    // function initiateTransfer(address recipient, uint256 amount) external {
-    //     // Transfer the tokens from the sender to this contract
-    //     require(
-    //         IERC20(token).transferFrom(msg.sender, address(this), amount),
-    //         "Transfer failed"
-    //     );
-    //     // Increment the nonce for the sender
-    //     nonces[msg.sender]++;
-    //     // Emit the transfer initiated event
-    //     emit TransferInitiated(
-    //         msg.sender,
-    //         recipient,
-    //         amount,
-    //         nonces[msg.sender]
-    //     );
-    // }
-
-    // Function to complete a transfer from the destination chain to the source chain
-    // function completeTransfer(
-    //     address sender,
-    //     address recipient,
-    //     uint256 amount,
-    //     uint256 nonce,
-    //     bytes memory signature
-    // ) external {
-    //     // Verify that the sender is the bridge contract on the destination chain
-    //     require(msg.sender == bridge, "Only bridge can call this function");
-    //     // Verify that the nonce is correct
-    //     require(nonce == nonces[recipient] + 1, "Invalid nonce");
-    //     // Verify that the signature is valid
-    //     require(
-    //         verifySignature(sender, recipient, amount, nonce, signature),
-    //         "Invalid signature"
-    //     );
-    //     // Transfer the tokens from this contract to the recipient
-    //     require(IERC20(token).transfer(recipient, amount), "Transfer failed");
-    //     // Increment the nonce for the recipient
-    //     nonces[recipient]++;
-    //     // Emit the transfer completed event
-    //     emit TransferCompleted(sender, recipient, amount, nonce);
-    // }
-
     // Function to pause the bridge
-    function pauseBridge() public // string memory message,
+    function pauseBridge() private // string memory message,
     // bytes[] memory signatures,
     // address[] memory signers
     {
@@ -152,26 +114,37 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
     }
 
     // Function to pause the bridge
-    function resumeBridge() public // string memory message,
+    function resumeBridge() private // string memory message,
     // bytes[] memory signatures,
     // address[] memory signers
     {
         paused = false;
     }
 
-    function initialize() public initializer {
+    // Event to emit when a transfer is initiated
+    event ValidatorAdded(
+        address addr, // The address of the validator
+        uint256 weight // The weight of the validator
+    );
+
+    function initialize(Validator[] calldata _validators) public initializer {
         // addValidator(firstPK, firstWeight);
         // __Ownable_init();
         __UUPSUpgradeable_init();
         paused = false;
+
+        for (uint256 i = 0; i < _validators.length; i++) {
+            addValidator(_validators[i].addr, _validators[i].weight);
+            emit ValidatorAdded(_validators[i].addr, _validators[i].weight);
+        }
     }
 
     // constructor() {
     //     _disableInitializers();
     // }
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() initializer {}
+    // /// @custom:oz-upgrades-unsafe-allow constructor
+    // constructor() initializer {}
 
     // Check also weight. i.e. no more than 33% of the total weight
     // A function to add a validator
@@ -368,24 +341,6 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
 
     // https://medium.com/coinmonks/how-to-build-a-decentralized-token-bridge-between-ethereum-and-binance-smart-chain-58de17441259
 
-    function mint(
-        address from,
-        address to,
-        uint amount,
-        uint nonce,
-        bytes calldata signature
-    ) external {
-        bytes32 message = prefixed(
-            keccak256(abi.encodePacked(from, to, amount, nonce))
-        );
-        require(recoverSigner(message, signature) == from, "wrong signature");
-        require(
-            processedNonces[from][nonce] == false,
-            "transfer already processed"
-        );
-        processedNonces[from][nonce] = true;
-    }
-
     function prefixed(bytes32 hash) internal pure returns (bytes32) {
         return
             keccak256(
@@ -425,11 +380,91 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
     // The contract can be upgraded by the owner
     function _authorizeUpgrade(address newImplementation) internal override {}
 
-    function _verify(
-        bytes32 data,
-        bytes memory signature,
-        address account
-    ) internal pure returns (bool) {
-        return data.toEthSignedMessageHash().recover(signature) == account;
+    // function _verify(
+    //     bytes32 data,
+    //     bytes memory signature,
+    //     address account
+    // ) internal pure returns (bool) {
+    //     return data.toEthSignedMessageHash().recover(signature) == account;
+    // }
+
+    // function wrapEther() external payable {
+    //     uint256 balanceBefore = IWETH(WETH).balanceOf(msg.sender);
+    //     uint256 ETHAmount = msg.value;
+
+    //     //create WETH from ETH
+    //     if (ETHAmount != 0) {
+    //         IWETH(WETH).deposit{value: ETHAmount}();
+    //         IWETH(WETH).transfer(msg.sender, ETHAmount);
+    //     }
+    //     require(
+    //         IWETH(WETH).balanceOf(msg.sender) - balanceBefore == ETHAmount,
+    //         "Ethereum not deposited"
+    //     );
+    // }
+
+    // //Extremely important!!!!
+    // receive() external payable {}
+
+    // function unwrapEther(uint256 Amount) external {
+    //     address payable sender = msg.sender;
+
+    //     if (Amount != 0) {
+    //         IWETH(WETH).transferFrom(msg.sender, address(this), Amount);
+    //         IWETH(WETH).withdraw(Amount);
+    //         sender.transfer(address(this).balance);
+    //     }
+    // }
+
+    // Function to initiate a transfer from the source chain to the destination chain
+    // function initiateTransfer(address recipient, uint256 amount) external {
+    //     // Transfer the tokens from the sender to this contract
+    //     require(
+    //         IERC20(token).transferFrom(msg.sender, address(this), amount),
+    //         "Transfer failed"
+    //     );
+    //     // Increment the nonce for the sender
+    //     nonces[msg.sender]++;
+    //     // Emit the transfer initiated event
+    //     emit TransferInitiated(
+    //         msg.sender,
+    //         recipient,
+    //         amount,
+    //         nonces[msg.sender]
+    //     );
+    // }
+
+    // Function to complete a transfer from the destination chain to the source chain
+    // function completeTransfer(
+    //     address sender,
+    //     address recipient,
+    //     uint256 amount,
+    //     uint256 nonce,
+    //     bytes memory signature
+    // ) external {
+    //     // Verify that the sender is the bridge contract on the destination chain
+    //     require(msg.sender == bridge, "Only bridge can call this function");
+    //     // Verify that the nonce is correct
+    //     require(nonce == nonces[recipient] + 1, "Invalid nonce");
+    //     // Verify that the signature is valid
+    //     require(
+    //         verifySignature(sender, recipient, amount, nonce, signature),
+    //         "Invalid signature"
+    //     );
+    //     // Transfer the tokens from this contract to the recipient
+    //     require(IERC20(token).transfer(recipient, amount), "Transfer failed");
+    //     // Increment the nonce for the recipient
+    //     nonces[recipient]++;
+    //     // Emit the transfer completed event
+    //     emit TransferCompleted(sender, recipient, amount, nonce);
+    // }
+
+    // returning the contract's balance in wei
+    function getBalance() public view returns (uint256) {
+        return address(this).balance;
+    }
+
+    function transfer(address payable transferAddress, uint256 amount) public {
+        transferAddress.transfer(amount);
     }
 }

@@ -37,6 +37,31 @@ describe(CONTRACT_NAME, () => {
     return { contract, owner };
   }
 
+  it("should correctly initialize validators", async function () {
+    const { contract } = await loadFixture(beforeEach);
+
+    const validators = [
+      {
+        addr: "0x5567f54B29B973343d632f7BFCe9507343D41FCa",
+        weight: 1000,
+      },
+      {
+        addr: "0x6E78914596C4c3fA605AD25A932564c753353DcC",
+        weight: 1000,
+      },
+    ];
+
+    await contract.initialize(validators);
+
+    for (let i = 0; i < validators.length; i++) {
+      const validator = await contract.validators(i);
+      expect(validator.addr).to.equal(validators[i].addr);
+      expect(validator.weight).to.equal(validators[i].weight);
+    }
+    expect((await contract.validatorsCount()).toString()).to.equal(
+      validators.length.toString()
+    );
+  });
 
   it("deploys", async () => {
     const contractFactory = await ethers.getContractFactory(CONTRACT_NAME);
