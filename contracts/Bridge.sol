@@ -72,7 +72,7 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
         address senderAddress;
         uint8 targetChain;
         address targetAddress;
-        bytes payload;
+        // bytes payload;
     }
 
     // A mapping from address to validator index
@@ -91,6 +91,7 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
         uint256 amount,
         uint256 nonce
     );
+
     // Event to emit when a transfer is completed
     event TransferCompleted(
         address indexed sender,
@@ -99,26 +100,27 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
         uint256 nonce
     );
 
-    // struct BridgeEvent has copy, drop {
-    //     message: BridgeMessage,
-    //     message_bytes: vector<u8>
-    // }
     event BridgeEvent(BridgeMessage message, bytes message_bytes);
 
     // Function to pause the bridge
-    function pauseBridge() private // string memory message,
-    // bytes[] memory signatures,
-    // address[] memory signers
-    {
+    function pauseBridge() private {
         paused = true;
     }
 
     // Function to pause the bridge
-    function resumeBridge() private // string memory message,
-    // bytes[] memory signatures,
-    // address[] memory signers
-    {
+    function resumeBridge() private {
         paused = false;
+    }
+
+    // modifier to check if bridge is running
+    modifier isRunning() {
+        // If the first argument of 'require' evaluates to 'false', execution terminates and all
+        // changes to the state and to Ether balances are reverted.
+        // This used to consume all gas in old EVM versions, but not anymore.
+        // It is often a good idea to use 'require' to check if functions are called correctly.
+        // As a second argument, you can also provide an explanation about what went wrong.
+        require(paused == false, "Bridge is not Running");
+        _;
     }
 
     // Event to emit when a transfer is initiated
@@ -146,6 +148,58 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
     // /// @custom:oz-upgrades-unsafe-allow constructor
     // constructor() initializer {}
 
+    /**
+    // Record bridge message approvels in Sui, call by the bridge client
+    public fun approve_bridge_message(
+        self: &mut Bridge,
+        raw_message: vector<u8>,
+        signatures: vector<vector<u8>>,
+        ctx: &TxContext
+    ) {
+        // varify signatures
+        bridge_committee::verify_signatures(&self.committee, raw_message, signatures);
+        let message = deserialise_message(raw_message);
+        // retrieve pending message if source chain is Sui
+        if (message.source_chain == chain_ids::sui()) {
+            let key = BridgeMessageKey { source_chain: chain_ids::sui(), bridge_seq_num: message.seq_num };
+            let recorded_message = table::remove(&mut self.pending_messages,key);
+            let message_bytes = serialise_message(recorded_message);
+            assert!(message_bytes == raw_message, EMalformedMessageError);
+        };
+        assert!(message.source_chain != chain_ids::sui(), EUnexpectedChainID);
+        let approved_message = ApprovedBridgeMessage {
+            message,
+            approved_epoch: tx_context::epoch(ctx),
+            signatures,
+        };
+        let key = BridgeMessageKey { source_chain: message.source_chain, bridge_seq_num: message.seq_num };
+        // Store approval
+        table::add(&mut self.approved_messages, key, approved_message);
+    }
+ */
+
+    function approveBridgeMessage(
+        BridgeMessage calldata bridgeMessage,
+        bytes[] calldata signatures
+    ) public view isRunning returns (bool, uint256) {
+        uint256 totalWeight = 0;
+        address[] memory tmpValidators = new address[](signatures.length);
+        // verify signatures
+        bytes32 hash = ethSignedMessageHash(bridgeMessage);
+        for (uint256 i = 0; i < signatures.length; i++) {
+            address recoveredPK = recoverSigner(hash, signatures[i]);
+            // Check if the address is not zero
+            require(recoveredPK != address(0), "Zero address.");
+            uint256 index = validatorIndex[recoveredPK] - 1;
+            require(index < validators.length, "Index out of bounds");
+
+            Validator memory validator = validators[index];
+            require(recoveredPK == validator.addr, "Invalid signature");
+            totalWeight += validator.weight;
+        }
+        return (true, totalWeight);
+    }
+
     // Check also weight. i.e. no more than 33% of the total weight
     // A function to add a validator
     function addValidator(address _pk, uint256 _weight) private {
@@ -161,220 +215,6 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
 
     function validatorsCount() public view returns (uint count) {
         return validators.length;
-    }
-
-    function verifySignature(
-        address sender,
-        uint8 messageType,
-        uint8 version,
-        uint8 sourceChain,
-        uint64 bridgeSeqNum,
-        address senderAddress,
-        uint8 targetChain,
-        address targetAddress,
-        bytes memory payload,
-        bytes memory signature
-    ) public pure returns (bool) {
-        // Recover the signer from the hash and the signature
-        address signer = recoverSigner(
-            // Hash the parameters
-            computeHash(
-                messageType,
-                version,
-                sourceChain,
-                bridgeSeqNum,
-                senderAddress,
-                targetChain,
-                targetAddress,
-                payload
-            ),
-            signature
-        );
-        // Return true if the signer is the sender
-        return (signer == sender);
-    }
-
-    // https://github.com/Gravity-Bridge/Gravity-Bridge/blob/main/solidity/contracts/Gravity.sol#L153
-    // Utility function to verify geth style signatures
-    function verifySignature(
-        address _signer,
-        bytes32 _theHash,
-        bytes memory signature
-    ) public pure returns (bool) {
-        bytes32 messageDigest = keccak256(
-            abi.encodePacked("\x19Ethereum Signed Message:\n32", _theHash)
-        );
-        // Signature calldata _sig
-        // return _signer == ECDSA.recover(messageDigest, _sig.v, _sig.r, _sig.s);
-        return _signer == ECDSA.recover(messageDigest, signature);
-    }
-
-    function verifySignature(
-        string memory message,
-        bytes memory signature
-    )
-        public
-        pure
-        returns (
-            // ) public pure returns (address, ECDSA.RecoverError) {
-            address,
-            ECDSA.RecoverError,
-            bytes32
-        )
-    {
-        // https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/utils/cryptography/MessageHashUtils.sol#L49
-        bytes32 signedMessageHash = MessageHashUtils.toEthSignedMessageHash(
-            bytes(message)
-        );
-        // https://docs.openzeppelin.com/contracts/4.x/api/utils#ECDSA-tryRecover-bytes32-bytes-
-        return ECDSA.tryRecover(signedMessageHash, signature);
-    }
-
-    // Function to verify the signature of the transfer
-    function verifySignature(
-        address sender,
-        address recipient,
-        uint256 amount,
-        uint256 nonce,
-        bytes memory signature
-    ) public view returns (bool) {
-        // Hash the parameters with the chain ID
-        bytes32 hash = keccak256(
-            abi.encodePacked(sender, recipient, amount, nonce, block.chainid)
-        );
-        // Recover the signer from the hash and the signature
-        address signer = recoverSigner(hash, signature);
-        // Return true if the signer is the sender
-        return (signer == sender);
-    }
-
-    // Function to recover the signer from the hash and the signature
-    function recoverSigner(
-        bytes32 hash,
-        bytes memory signature
-    ) public pure returns (address) {
-        // Check the signature length
-        require(signature.length == 65, "Invalid signature length");
-        // Divide the signature into r, s and v variables
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-        assembly {
-            r := mload(add(signature, 0x20))
-            s := mload(add(signature, 0x40))
-            v := byte(0, mload(add(signature, 0x60)))
-        }
-        // Return the address that signed the hash
-        return ecrecover(hash, v, r, s);
-    }
-
-    // https://github.com/anoma/ethereum-bridge/blob/main/src/Bridge.sol#L279
-    function _isValidSignature(
-        address _signer,
-        bytes32 _messageHash,
-        // Signature calldata _signature
-        bytes memory signature
-    ) internal pure returns (bool) {
-        bytes32 messageDigest;
-        assembly ("memory-safe") {
-            let scratch := mload(0x40)
-
-            mstore(scratch, "\x19Ethereum Signed Message:\n32\x00\x00\x00\x00")
-            mstore(add(scratch, 28), _messageHash)
-
-            messageDigest := keccak256(scratch, 60)
-        }
-
-        // (address recovered, ECDSA.RecoverError error) = ECDSA.tryRecover(
-        (address recovered, ECDSA.RecoverError error, ) = ECDSA.tryRecover(
-            messageDigest,
-            signature
-        );
-        return error == ECDSA.RecoverError.NoError && recovered == _signer;
-    }
-
-    function computeHash(
-        uint8 messageType,
-        uint8 version,
-        uint8 sourceChain,
-        uint64 bridgeSeqNum,
-        address senderAddress,
-        uint8 targetChain,
-        address targetAddress,
-        bytes memory payload
-    ) internal pure returns (bytes32) {
-        return
-            keccak256(
-                abi.encode(
-                    messageType,
-                    version,
-                    sourceChain,
-                    bridgeSeqNum,
-                    senderAddress,
-                    targetChain,
-                    targetAddress,
-                    payload
-                )
-            );
-    }
-
-    // https://github.com/Gravity-Bridge/Gravity-Bridge/blob/main/solidity/contracts/Gravity.sol#L153
-
-    // This represents a validator signature
-    struct Signature {
-        uint8 v;
-        bytes32 r;
-        bytes32 s;
-    }
-
-    // Utility function to verify geth style signatures
-    function verifyGethStyleSignature(
-        address _signer,
-        bytes32 _theHash,
-        Signature calldata _sig
-    ) private pure returns (bool) {
-        bytes32 messageDigest = keccak256(
-            abi.encodePacked("\x19Ethereum Signed Message:\n32", _theHash)
-        );
-        return _signer == ECDSA.recover(messageDigest, _sig.v, _sig.r, _sig.s);
-    }
-
-    // https://medium.com/coinmonks/how-to-build-a-decentralized-token-bridge-between-ethereum-and-binance-smart-chain-58de17441259
-
-    function prefixed(bytes32 hash) internal pure returns (bytes32) {
-        return
-            keccak256(
-                abi.encodePacked("\x19Ethereum Signed Message:\n32", hash)
-            );
-    }
-
-    function recoverSignerMedium(
-        bytes32 message,
-        bytes memory sig
-    ) internal pure returns (address) {
-        uint8 v;
-        bytes32 r;
-        bytes32 s;
-        (v, r, s) = splitSignature(sig);
-        return ecrecover(message, v, r, s);
-    }
-
-    function splitSignature(
-        bytes memory sig
-    ) internal pure returns (uint8, bytes32, bytes32) {
-        require(sig.length == 65);
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-        assembly {
-            // first 32 bytes, after the length prefix
-            r := mload(add(sig, 32))
-            // second 32 bytes
-            s := mload(add(sig, 64))
-            // final byte (first byte of the next 32 bytes)
-            v := byte(0, mload(add(sig, 96)))
-        }
-        return (v, r, s);
     }
 
     // The contract can be upgraded by the owner
@@ -417,47 +257,43 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
     // }
 
     // Function to initiate a transfer from the source chain to the destination chain
-    // function initiateTransfer(address recipient, uint256 amount) external {
-    //     // Transfer the tokens from the sender to this contract
-    //     require(
-    //         IERC20(token).transferFrom(msg.sender, address(this), amount),
-    //         "Transfer failed"
-    //     );
-    //     // Increment the nonce for the sender
-    //     nonces[msg.sender]++;
-    //     // Emit the transfer initiated event
-    //     emit TransferInitiated(
-    //         msg.sender,
-    //         recipient,
-    //         amount,
-    //         nonces[msg.sender]
-    //     );
-    // }
+    function initiateTransfer(address recipient, uint256 amount) external {
+        // Transfer the tokens from the sender to this contract
+        // require(
+        //     IERC20(token).transferFrom(msg.sender, address(this), amount),
+        //     "Transfer failed"
+        // );
+    }
 
     // Function to complete a transfer from the destination chain to the source chain
-    // function completeTransfer(
-    //     address sender,
-    //     address recipient,
-    //     uint256 amount,
-    //     uint256 nonce,
-    //     bytes memory signature
-    // ) external {
-    //     // Verify that the sender is the bridge contract on the destination chain
-    //     require(msg.sender == bridge, "Only bridge can call this function");
-    //     // Verify that the nonce is correct
-    //     require(nonce == nonces[recipient] + 1, "Invalid nonce");
-    //     // Verify that the signature is valid
-    //     require(
-    //         verifySignature(sender, recipient, amount, nonce, signature),
-    //         "Invalid signature"
-    //     );
-    //     // Transfer the tokens from this contract to the recipient
-    //     require(IERC20(token).transfer(recipient, amount), "Transfer failed");
-    //     // Increment the nonce for the recipient
-    //     nonces[recipient]++;
-    //     // Emit the transfer completed event
-    //     emit TransferCompleted(sender, recipient, amount, nonce);
-    // }
+    function completeTransfer(
+        address sender,
+        address recipient,
+        uint256 amount,
+        uint256 nonce,
+        bytes memory signature
+    ) private {
+        // Verify that the nonce is correct
+        require(
+            processedNonces[recipient][nonce] == false,
+            "transfer already processed"
+        );
+
+        // Verify that the signature is valid
+        // require(
+        //     verifySignature(sender, recipient, amount, nonce, signature),
+        //     "Invalid signature"
+        // );
+
+        // Transfer the tokens from this contract to the recipient
+        // require(IERC20(token).transfer(recipient, amount), "Transfer failed");
+
+        // Increment the nonce for the recipient
+        processedNonces[recipient][nonce] = true;
+
+        // Emit the transfer completed event
+        emit TransferCompleted(sender, recipient, amount, nonce);
+    }
 
     // returning the contract's balance in wei
     function getBalance() public view returns (uint256) {
@@ -467,4 +303,237 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
     function transfer(address payable transferAddress, uint256 amount) public {
         transferAddress.transfer(amount);
     }
+
+    // "0x93f82d7903c6a37336c33d68a890b448665735b4f513003cb4ef0029da0372b9329e0f6fc0b9f9c0c77d66bbf7217da260803fcae345a72f7a7764c56f464b5c1b"
+    // [1 ,2 ,3 ,4 ,"0x5567f54B29B973343d632f7BFCe9507343D41FCa" ,5 ,"0x5567f54B29B973343d632f7BFCe9507343D41FCa"]
+    function ethSignedMessageHash(
+        BridgeMessage calldata bridgeMessage
+    ) public pure returns (bytes32) {
+        bytes32 hash = keccak256(
+            abi.encodePacked(
+                bridgeMessage.messageType,
+                bridgeMessage.version,
+                bridgeMessage.sourceChain,
+                bridgeMessage.bridgeSeqNum,
+                bridgeMessage.senderAddress,
+                bridgeMessage.targetChain,
+                bridgeMessage.targetAddress
+            )
+        );
+        return MessageHashUtils.toEthSignedMessageHash(hash);
+
+        // address signer = ECDSA.recover(message, signature);
+        // return signer;
+    }
+
+    function ethSignedMessageHash(
+        string memory message
+    ) public pure returns (bytes32) {
+        bytes32 hash = keccak256(abi.encodePacked(message));
+        return MessageHashUtils.toEthSignedMessageHash(hash);
+    }
+
+    function recoverSigner(
+        bytes32 hash,
+        bytes calldata signature
+    ) public pure returns (address) {
+        return ECDSA.recover(hash, signature);
+    }
+
+    // function burn(address to, uint amount) external {
+    //     token.burn(msg.sender, amount);
+    // }
+
+    // function mint(address to, uint amount, uint otherChainNonce) external {
+    //     token.mint(to, amount);
+    // }
+
+    // function verifySignature(
+    //     address sender,
+    //     uint8 messageType,
+    //     uint8 version,
+    //     uint8 sourceChain,
+    //     uint64 bridgeSeqNum,
+    //     address senderAddress,
+    //     uint8 targetChain,
+    //     address targetAddress,
+    //     bytes memory payload,
+    //     bytes memory signature
+    // ) public pure returns (bool) {
+    //     // Recover the signer from the hash and the signature
+    //     address signer = recoverSigner(
+    //         // Hash the parameters
+    //         computeHash(
+    //             messageType,
+    //             version,
+    //             sourceChain,
+    //             bridgeSeqNum,
+    //             senderAddress,
+    //             targetChain,
+    //             targetAddress,
+    //             payload
+    //         ),
+    //         signature
+    //     );
+    //     // Return true if the signer is the sender
+    //     return (signer == sender);
+    // }
+
+    // https://github.com/Gravity-Bridge/Gravity-Bridge/blob/main/solidity/contracts/Gravity.sol#L153
+    // Utility function to verify geth style signatures
+    // function verifySignature(
+    //     address _signer,
+    //     bytes32 _theHash,
+    //     bytes memory signature
+    // ) public pure returns (bool) {
+    //     bytes32 messageDigest = keccak256(
+    //         abi.encodePacked("\x19Ethereum Signed Message:\n32", _theHash)
+    //     );
+    //     // Signature calldata _sig
+    //     // return _signer == ECDSA.recover(messageDigest, _sig.v, _sig.r, _sig.s);
+    //     return _signer == ECDSA.recover(messageDigest, signature);
+    // }
+
+    // function verifySignature(
+    //     string memory message,
+    //     bytes memory signature
+    // )
+    //     public
+    //     pure
+    //     returns (
+    //         // ) public pure returns (address, ECDSA.RecoverError) {
+    //         address,
+    //         ECDSA.RecoverError,
+    //         bytes32
+    //     )
+    // {
+    //     // https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/utils/cryptography/MessageHashUtils.sol#L49
+    //     bytes32 signedMessageHash = MessageHashUtils.toEthSignedMessageHash(
+    //         bytes(message)
+    //     );
+    //     // https://docs.openzeppelin.com/contracts/4.x/api/utils#ECDSA-tryRecover-bytes32-bytes-
+    //     return ECDSA.tryRecover(signedMessageHash, signature);
+    // }
+
+    // Function to verify the signature of the transfer
+    // function verifySignature(
+    //     address sender,
+    //     address recipient,
+    //     uint256 amount,
+    //     uint256 nonce,
+    //     bytes memory signature
+    // ) public view returns (bool) {
+    //     // Hash the parameters with the chain ID
+    //     bytes32 hash = keccak256(
+    //         abi.encodePacked(sender, recipient, amount, nonce, block.chainid)
+    //     );
+    //     // Recover the signer from the hash and the signature
+    //     address signer = recoverSigner(hash, signature);
+    //     // Return true if the signer is the sender
+    //     return (signer == sender);
+    // }
+
+    // Function to recover the signer from the hash and the signature
+    // function recoverSigner(
+    //     bytes32 hash,
+    //     bytes memory signature
+    // ) public pure returns (address) {
+    //     // Check the signature length
+    //     require(signature.length == 65, "Invalid signature length");
+    //     // Divide the signature into r, s and v variables
+    //     bytes32 r;
+    //     bytes32 s;
+    //     uint8 v;
+    //     assembly {
+    //         r := mload(add(signature, 0x20))
+    //         s := mload(add(signature, 0x40))
+    //         v := byte(0, mload(add(signature, 0x60)))
+    //     }
+    //     // Return the address that signed the hash
+    //     return ecrecover(hash, v, r, s);
+    // }
+
+    // https://github.com/anoma/ethereum-bridge/blob/main/src/Bridge.sol#L279
+    // function _isValidSignature(
+    //     address _signer,
+    //     bytes32 _messageHash,
+    //     // Signature calldata _signature
+    //     bytes memory signature
+    // ) internal pure returns (bool) {
+    //     bytes32 messageDigest;
+    //     assembly ("memory-safe") {
+    //         let scratch := mload(0x40)
+
+    //         mstore(scratch, "\x19Ethereum Signed Message:\n32\x00\x00\x00\x00")
+    //         mstore(add(scratch, 28), _messageHash)
+
+    //         messageDigest := keccak256(scratch, 60)
+    //     }
+
+    //     // (address recovered, ECDSA.RecoverError error) = ECDSA.tryRecover(
+    //     (address recovered, ECDSA.RecoverError error, ) = ECDSA.tryRecover(
+    //         messageDigest,
+    //         signature
+    //     );
+    //     return error == ECDSA.RecoverError.NoError && recovered == _signer;
+    // }
+
+    // https://github.com/Gravity-Bridge/Gravity-Bridge/blob/main/solidity/contracts/Gravity.sol#L153
+
+    // This represents a validator signature
+    // struct Signature {
+    //     uint8 v;
+    //     bytes32 r;
+    //     bytes32 s;
+    // }
+
+    // Utility function to verify geth style signatures
+    // function verifyGethStyleSignature(
+    //     address _signer,
+    //     bytes32 _theHash,
+    //     Signature calldata _sig
+    // ) private pure returns (bool) {
+    //     bytes32 messageDigest = keccak256(
+    //         abi.encodePacked("\x19Ethereum Signed Message:\n32", _theHash)
+    //     );
+    //     return _signer == ECDSA.recover(messageDigest, _sig.v, _sig.r, _sig.s);
+    // }
+
+    // https://medium.com/coinmonks/how-to-build-a-decentralized-token-bridge-between-ethereum-and-binance-smart-chain-58de17441259
+
+    // function prefixed(bytes32 hash) internal pure returns (bytes32) {
+    //     return
+    //         keccak256(
+    //             abi.encodePacked("\x19Ethereum Signed Message:\n32", hash)
+    //         );
+    // }
+
+    // function recoverSignerMedium(
+    //     bytes32 message,
+    //     bytes memory sig
+    // ) internal pure returns (address) {
+    //     uint8 v;
+    //     bytes32 r;
+    //     bytes32 s;
+    //     (v, r, s) = splitSignature(sig);
+    //     return ecrecover(message, v, r, s);
+    // }
+
+    // function splitSignature(
+    //     bytes memory sig
+    // ) internal pure returns (uint8, bytes32, bytes32) {
+    //     require(sig.length == 65);
+    //     bytes32 r;
+    //     bytes32 s;
+    //     uint8 v;
+    //     assembly {
+    //         // first 32 bytes, after the length prefix
+    //         r := mload(add(sig, 32))
+    //         // second 32 bytes
+    //         s := mload(add(sig, 64))
+    //         // final byte (first byte of the next 32 bytes)
+    //         v := byte(0, mload(add(sig, 96)))
+    //     }
+    //     return (v, r, s);
+    // }
 }

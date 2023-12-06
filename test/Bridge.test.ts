@@ -205,11 +205,6 @@ describe(CONTRACT_NAME, () => {
   // Write a test case for getting the signer from a message hash
   it("should recover the signer from a message", async () => {
     const { contract } = await loadFixture(beforeEach);
-    // await contract
-    //   .initialize
-    //   // "0x94926B0ACceE21E61EE900592A039a1075758014",
-    //   // 10000
-    //   ();
 
     // address, ECDSA.RecoverError, bytes32
     const expectedAddress = "0x5567f54B29B973343d632f7BFCe9507343D41FCa";
@@ -218,15 +213,59 @@ describe(CONTRACT_NAME, () => {
       "0x0000000000000000000000000000000000000000000000000000000000000000";
 
     const message = "Hello, World!";
+    const messageHash =
+      "0xc21a9f56eed4418969f07d5bb55aecee0f369fdf586f1f6ab8cf5e3b9ec6bf18";
     const signature =
-      "0x17e6ada65d8ac6d34cab0d507fb963550be3a6a7feb6fbfe63fe87c0e9bc9fca322c9f2e72b7ec09c5b058905d1b84fe27ff3b68fb2993361602280f8c01c6e41c";
+      "0xa4573af531df510a54e86af94f04c368e1705d89de4549e050ed9be02471cdb60c69f4640174c28c0030b8cb93404c8ec420117db37cf753b863c9320ba131d21b";
 
-    const res = await contract.verifySignature(message, signature);
-    console.log(res);
+    // const res = await contract.verifySignature(message, signature);
+    const res = await contract.recoverSigner(messageHash, signature);
+
+    expect(res).to.equal(expectedAddress);
 
     // Compare the expected and actual lengths
-    expect(res[0]).to.equal(expectedAddress);
-    expect(res[1]).to.equal(expectedError);
+    // expect(res[0]).to.equal(expectedAddress);
+    // expect(res[1]).to.equal(expectedError);
     // expect(res[2]).to.equal(expectedHash);
+  });
+
+  it("should approve the bridge message and return the total weight of valid signatures", async function () {
+    const { contract } = await loadFixture(beforeEach);
+
+    const validators = [
+      {
+        addr: "0x5567f54B29B973343d632f7BFCe9507343D41FCa",
+        weight: 1000,
+      },
+      {
+        addr: "0x6E78914596C4c3fA605AD25A932564c753353DcC",
+        weight: 1000,
+      },
+    ];
+
+    await contract.initialize(validators);
+
+    // Example bridgeMessage
+    const bridgeMessage = {
+      messageType: 1,
+      version: 2,
+      sourceChain: 3,
+      bridgeSeqNum: 4,
+      senderAddress: "0x5567f54B29B973343d632f7BFCe9507343D41FCa",
+      targetChain: 5,
+      targetAddress: "0x5567f54B29B973343d632f7BFCe9507343D41FCa",
+    };
+
+    // Example signatures array (these would be actual signatures in a real test)
+    const signatures = [
+      "0x93f82d7903c6a37336c33d68a890b448665735b4f513003cb4ef0029da0372b9329e0f6fc0b9f9c0c77d66bbf7217da260803fcae345a72f7a7764c56f464b5c1b",
+    ];
+
+    const [isValid, totalWeight] = await contract.approveBridgeMessage(
+      bridgeMessage,
+      signatures
+    );
+    expect(isValid).to.be.true;
+    expect(totalWeight).to.equal(validators[0].weight);
   });
 });
