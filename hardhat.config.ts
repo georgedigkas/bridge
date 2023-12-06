@@ -38,6 +38,10 @@ const config: HardhatUserConfig = {
       url: `https://eth-rpc.testnet.sui.io:443`,
       accounts: { mnemonic: mnemonic },
     },
+    goerlihh: {
+      url: "https://rpc.ankr.com/eth_goerli",
+      chainId: 5
+    },
   },
   // defender: {
   //   apiKey: process.env.API_KEY,

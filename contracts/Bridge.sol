@@ -12,6 +12,7 @@ import {ERC721Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC72
 
 import "./ChainIDs.sol";
 import "./TokenIDs.sol";
+
 // import {BridgeMessage} from "./interfaces/ICommon.sol";
 
 // Interface for ERC20 token
@@ -25,12 +26,9 @@ import "./TokenIDs.sol";
 // }
 
 // Bridge contract
-contract Bridge is
-    Initializable,
-    UUPSUpgradeable,
-    ERC721Upgradeable
-{
+contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
     using SafeERC20 for IERC20;
+    using MessageHashUtils for bytes32;
 
     uint256[48] __gap;
 
@@ -426,4 +424,12 @@ contract Bridge is
 
     // The contract can be upgraded by the owner
     function _authorizeUpgrade(address newImplementation) internal override {}
+
+    function _verify(
+        bytes32 data,
+        bytes memory signature,
+        address account
+    ) internal pure returns (bool) {
+        return data.toEthSignedMessageHash().recover(signature) == account;
+    }
 }
