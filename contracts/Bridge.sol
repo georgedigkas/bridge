@@ -103,12 +103,12 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
     event BridgeEvent(BridgeMessage message, bytes message_bytes);
 
     // Function to pause the bridge
-    function pauseBridge() private {
+    function pauseBridge() private isRunning {
         paused = true;
     }
 
     // Function to pause the bridge
-    function resumeBridge() private {
+    function resumeBridge() private isPaused {
         paused = false;
     }
 
@@ -120,6 +120,17 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
         // It is often a good idea to use 'require' to check if functions are called correctly.
         // As a second argument, you can also provide an explanation about what went wrong.
         require(paused == false, "Bridge is not Running");
+        _;
+    }
+
+    // modifier to check if bridge is running
+    modifier isPaused() {
+        // If the first argument of 'require' evaluates to 'false', execution terminates and all
+        // changes to the state and to Ether balances are reverted.
+        // This used to consume all gas in old EVM versions, but not anymore.
+        // It is often a good idea to use 'require' to check if functions are called correctly.
+        // As a second argument, you can also provide an explanation about what went wrong.
+        require(paused == true, "Bridge is Paused");
         _;
     }
 
@@ -181,9 +192,8 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
     function approveBridgeMessage(
         BridgeMessage calldata bridgeMessage,
         bytes[] calldata signatures
-    ) public view isRunning returns (bool, uint256) {
+    ) public isRunning returns (bool, uint256) {
         uint256 totalWeight = 0;
-        address[] memory tmpValidators = new address[](signatures.length);
         // verify signatures
         bytes32 hash = ethSignedMessageHash(bridgeMessage);
         for (uint256 i = 0; i < signatures.length; i++) {
@@ -197,7 +207,34 @@ contract Bridge is Initializable, UUPSUpgradeable, ERC721Upgradeable {
             require(recoveredPK == validator.addr, "Invalid signature");
             totalWeight += validator.weight;
         }
+
+        if (bridgeMessage.messageType == 1) pauseBridge();
+
         return (true, totalWeight);
+    }
+
+    function resumePausedBridge(
+        BridgeMessage calldata bridgeMessage,
+        bytes[] calldata signatures
+    ) public isPaused {
+        uint256 totalWeight = 0;
+        // verify signatures
+        bytes32 hash = ethSignedMessageHash(bridgeMessage);
+        for (uint256 i = 0; i < signatures.length; i++) {
+            address recoveredPK = recoverSigner(hash, signatures[i]);
+            // Check if the address is not zero
+            require(recoveredPK != address(0), "Zero address.");
+            uint256 index = validatorIndex[recoveredPK] - 1;
+            require(index < validators.length, "Index out of bounds");
+
+            Validator memory validator = validators[index];
+            require(recoveredPK == validator.addr, "Invalid signature");
+            totalWeight += validator.weight;
+        }
+
+        // TODO
+        require(totalWeight >= 999, "Not enough total signature weight");
+        if (bridgeMessage.messageType == 1) resumeBridge();
     }
 
     // Check also weight. i.e. no more than 33% of the total weight

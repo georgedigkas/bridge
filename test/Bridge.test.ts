@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { ethers, upgrades } from "hardhat";
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
+import { boolean } from "hardhat/internal/core/params/argumentTypes";
 
 // Define the contract name and the interface
 const CONTRACT_NAME = "Bridge";
@@ -18,6 +19,7 @@ const CONTRACT_INTERFACE = [
   "function addValidator(address, uint256) private",
   "function validatorsCount() public view returns (uint)",
   "function verifyFunction(string memory message, bytes memory signature) external pure returns (address, ECDSA.RecoverError, bytes32)",
+  "function approveBridgeMessage(BridgeMessage calldata bridgeMessage, bytes[] calldata signatures) public isRunning returns (bool, uint256)",
 ];
 
 // Write a test suite for the contract
@@ -243,6 +245,8 @@ describe(CONTRACT_NAME, () => {
       },
     ];
 
+    expect(await contract.paused()).to.be.false;
+
     await contract.initialize(validators);
 
     // Example bridgeMessage
@@ -261,11 +265,101 @@ describe(CONTRACT_NAME, () => {
       "0x93f82d7903c6a37336c33d68a890b448665735b4f513003cb4ef0029da0372b9329e0f6fc0b9f9c0c77d66bbf7217da260803fcae345a72f7a7764c56f464b5c1b",
     ];
 
-    const [isValid, totalWeight] = await contract.approveBridgeMessage(
-      bridgeMessage,
-      signatures
-    );
-    expect(isValid).to.be.true;
-    expect(totalWeight).to.equal(validators[0].weight);
+    // as [boolean, bigint]
+    // const [isValid, totalWeight] = await contract.approveBridgeMessage(
+    //   bridgeMessage,
+    //   signatures
+    // );
+    // expect(isValid).to.be.true;
+    // expect(totalWeight).to.equal(validators[0].weight);
+
+    await contract.approveBridgeMessage(bridgeMessage, signatures);
+    expect(await contract.paused()).to.be.true;
   });
+
+  it("should resume the bridge if messageType is 1 and total weight is at least 999", async function () {
+    const { contract } = await loadFixture(beforeEach);
+
+    const validators = [
+      {
+        addr: "0x5567f54B29B973343d632f7BFCe9507343D41FCa",
+        weight: 1000,
+      },
+      {
+        addr: "0x6E78914596C4c3fA605AD25A932564c753353DcC",
+        weight: 1000,
+      },
+    ];
+
+    expect(await contract.paused()).to.be.false;
+
+    await contract.initialize(validators);
+
+    // Example bridgeMessage
+    const bridgeMessage = {
+      messageType: 1,
+      version: 2,
+      sourceChain: 3,
+      bridgeSeqNum: 4,
+      senderAddress: "0x5567f54B29B973343d632f7BFCe9507343D41FCa",
+      targetChain: 5,
+      targetAddress: "0x5567f54B29B973343d632f7BFCe9507343D41FCa",
+    };
+
+    // Example signatures array (these would be actual signatures in a real test)
+    const signatures = [
+      "0x93f82d7903c6a37336c33d68a890b448665735b4f513003cb4ef0029da0372b9329e0f6fc0b9f9c0c77d66bbf7217da260803fcae345a72f7a7764c56f464b5c1b",
+    ];
+
+    await contract.approveBridgeMessage(bridgeMessage, signatures);
+    expect(await contract.paused()).to.be.true;
+
+    // Call the resumePausedBridge function with the bridgeMessage and signatures
+    await contract.resumePausedBridge(bridgeMessage, signatures);
+
+    // Add logic to check if the bridge has been resumed
+    expect(await contract.paused()).to.be.false;
+  });
+
+  // it("should pause the bridge", async function () {
+  //   const { contract } = await loadFixture(beforeEach);
+
+  //   const validators = [
+  //     {
+  //       addr: "0x5567f54B29B973343d632f7BFCe9507343D41FCa",
+  //       weight: 1000,
+  //     },
+  //     {
+  //       addr: "0x6E78914596C4c3fA605AD25A932564c753353DcC",
+  //       weight: 1000,
+  //     },
+  //   ];
+
+  //   await contract.initialize(validators);
+
+  //   // Example bridgeMessage
+  //   const bridgeMessage = {
+  //     messageType: 1,
+  //     version: 2,
+  //     sourceChain: 3,
+  //     bridgeSeqNum: 4,
+  //     senderAddress: "0x5567f54B29B973343d632f7BFCe9507343D41FCa",
+  //     targetChain: 5,
+  //     targetAddress: "0x5567f54B29B973343d632f7BFCe9507343D41FCa",
+  //   };
+
+  //   // Example signatures array (these would be actual signatures in a real test)
+  //   const signatures = [
+  //     "0x93f82d7903c6a37336c33d68a890b448665735b4f513003cb4ef0029da0372b9329e0f6fc0b9f9c0c77d66bbf7217da260803fcae345a72f7a7764c56f464b5c1b",
+  //   ];
+
+  //   const [isValid, totalWeight] = await contract.approveBridgeMessage(
+  //     bridgeMessage,
+  //     signatures
+  //   );
+  //   const paused = await contract.paused();
+  //   expect(isValid).to.be.true;
+  //   expect(totalWeight).to.equal(validators[0].weight);
+  //   expect(paused).to.be.true;
+  // });
 });
