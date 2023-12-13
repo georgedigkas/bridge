@@ -12,3 +12,8 @@ node_modules
 # solidity-coverage files
 /coverage
 /coverage.json
+
+# secrets.json file
+secrets.json
+# macOS
+.DS_Store
