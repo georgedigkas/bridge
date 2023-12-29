@@ -1,19 +1,31 @@
-node_modules
+**/node_modules
+artifacts*
+deployments/localhost
+cache*
+# testing
+coverage
+# production
+build
+# misc
+.DS_Store
+.env
+coverage.json
+types
+network_config.json
+.vscode
+cache/
+out/
+*.txt
+!remappings.txt
+
+lcov.info
+
+types
+
 .env
 
-# Hardhat files
-/cache
-/artifacts
+deployments/localhost
+deployments/ganache
+deployments/hardhat
 
-# TypeChain files
-/typechain
-/typechain-types
-
-# solidity-coverage files
-/coverage
-/coverage.json
-
-# secrets.json file
-secrets.json
-# macOS
-.DS_Store
+docs

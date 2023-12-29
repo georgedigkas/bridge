@@ -1,0 +1,9 @@
+[profile.default]
+src = 'contracts'
+test = 'test'
+out = 'out'
+libs = ['lib']
+[fmt] 
+  line_length = 100
+[fuzz]
+  runs = 1000

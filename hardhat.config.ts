@@ -1,55 +1,110 @@
-import "@nomicfoundation/hardhat-ethers";
-import "@nomicfoundation/hardhat-toolbox";
+const fs = require("fs");
+import { HardhatUserConfig, task } from "hardhat/config";
+import { NetworkUserConfig } from "hardhat/types";
+import { config as dotenvConfig } from "dotenv";
+import { resolve } from "path";
+import "hardhat-dependency-compiler";
+import "hardhat-preprocessor";
+import "hardhat-deploy";
+import "hardhat-deploy-ethers";
 import "@openzeppelin/hardhat-upgrades";
-// import "@openzeppelin/hardhat-defender";
-import { HardhatUserConfig } from "hardhat/config";
-import { alchemyApiKey, mnemonic } from "./secrets.json";
+import "@nomicfoundation/hardhat-ethers";
+import "@nomicfoundation/hardhat-verify";
 
-const config: HardhatUserConfig = {
-  solidity: {
-    version: "0.8.20",
-    settings: {
-      optimizer: {
-        enabled: true,
-        runs: 200,
-      },
-    },
-  },
-  paths: {
-    sources: "./contracts",
-    tests: "./test",
-    cache: "./cache",
-    artifacts: "./artifacts",
-  },
-  mocha: {
-    timeout: 40000,
-  },
-  networks: {
-    hardhat: {},
-    sepolia: {
-      url: "https://sepolia.infura.io/v3/<key>",
-      accounts: { mnemonic: mnemonic },
-    },
-    goerli: {
-      url: `https://eth-goerli.alchemyapi.io/v2/${alchemyApiKey}`,
-      accounts: { mnemonic: mnemonic },
-    },
-    sepoliasui: {
-      url: `https://eth-rpc.testnet.sui.io:443`,
-      accounts: { mnemonic: mnemonic },
-    },
-    goerlihh: {
-      url: "https://rpc.ankr.com/eth_goerli",
-      chainId: 5,
-    },
-    coverage: {
-      url: "http://127.0.0.1:8555",
-    },
-  },
-  // defender: {
-  //   apiKey: process.env.API_KEY,
-  //   apiSecret: process.env.API_SECRET,
-  // },
+dotenvConfig({ path: resolve(__dirname, "./.env") });
+
+const chainIds = {
+  mainnet: 1,
+  goerli: 5,
+  hardhat: 1337,
 };
 
+const MNEMONIC = process.env.MNEMONIC || "";
+const INFURA_API_KEY = process.env.INFURA_API_KEY || "";
+
+function createTestnetConfig(
+  network: keyof typeof chainIds
+): NetworkUserConfig {
+  const url: string = "https://" + network + ".infura.io/v3/" + INFURA_API_KEY;
+  return {
+    accounts: {
+      count: 10,
+      initialIndex: 0,
+      mnemonic: MNEMONIC,
+      path: "m/44'/60'/0'/0",
+    },
+    chainId: chainIds[network],
+    url,
+    saveDeployments: true,
+  };
+}
+
+// You need to export an object to set up your config
+// Go to https://hardhat.org/config/ to learn more
+
+const config: HardhatUserConfig = {
+  defaultNetwork: "hardhat",
+  networks: {
+    hardhat: {
+      accounts: {
+        mnemonic: MNEMONIC,
+      },
+      chainId: chainIds.hardhat,
+      saveDeployments: true,
+    },
+    localhost: {
+      accounts: {
+        mnemonic: MNEMONIC,
+      },
+      chainId: chainIds.hardhat,
+      saveDeployments: true,
+    },
+    mainnet: createTestnetConfig("mainnet"),
+    goerli: createTestnetConfig("goerli"),
+  },
+  solidity: {
+    compilers: [
+      {
+        version: "0.8.15",
+      },
+    ],
+  },
+  paths: {
+    artifacts: "./artifacts",
+    cache: "./cache",
+    sources: "./contracts",
+    tests: "./test",
+    deployments: "./deployments",
+    deploy: "./deploy",
+    imports: "./artifacts",
+  },
+  etherscan: {
+    apiKey: process.env.ETHERSCAN_API_KEY,
+  },
+  preprocess: {
+    eachLine: (hre) => ({
+      transform: (line) => {
+        if (line.match(/^\s*import /i)) {
+          getRemappings().forEach(([find, replace]) => {
+            if (line.match(find)) {
+              line = line.replace(find, replace);
+            }
+          });
+        }
+        return line;
+      },
+    }),
+  },
+  etherscan: {
+    apiKey: process.env.ETHERSCAN_API_KEY,
+  },
+};
 export default config;
+
+function getRemappings() {
+  return fs
+    .readFileSync("remappings.txt", "utf8")
+    .split("\n")
+    .filter(Boolean) // remove empty lines
+    .map((line) => line.trim().split("="));
+}

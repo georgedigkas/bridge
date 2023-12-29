@@ -1,0 +1,206 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "./interfaces/IBridgeCommittee.sol";
+import "./utils/Messages.sol";
+
+contract BridgeCommittee is IBridgeCommittee, UUPSUpgradeable {
+    /* ========== CONSTANTS ========== */
+
+    uint16 public constant BLOCKLIST_STAKE_REQUIRED = 5001;
+    uint16 public constant COMMITTEE_UPGRADE_STAKE_REQUIRED = 5001;
+
+    /* ========== STATE VARIABLES ========== */
+
+    // member address => stake amount
+    mapping(address => uint16) public committee;
+    // member address => is blocklisted
+    mapping(address => bool) public blocklist;
+    // messageType => nonce
+    mapping(uint8 => uint64) public nonces;
+
+    /* ========== INITIALIZER ========== */
+
+    /// @notice Initializes the contract with the deployer as the admin.
+    /// @dev should be called directly after deployment (see OpenZeppelin upgradeable standards).
+    function initialize(address[] memory _committee, uint16[] memory stakes) external initializer {
+        __UUPSUpgradeable_init();
+        uint16 total_stake = 0;
+
+        // TODO: add unittest check unequal lengths
+        require(_committee.length == stakes.length, "Committee and stake arrays must be of the same length");
+
+        // TODO: how to check duplication
+        for (uint16 i = 0; i < _committee.length; i++) {
+
+            committee[_committee[i]] = stakes[i];
+            total_stake += stakes[i];
+        }
+
+        // TODO: add unittest check total stake != 10k
+        require(total_stake == 10000, "Total stake must be 10000");
+    }
+
+    /* ========== EXTERNAL FUNCTIONS ========== */
+
+    function updateBlocklistWithSignatures(
+        bytes[] memory signatures,
+        Messages.Message memory message
+    ) external {
+        // verify message type nonce
+        require(message.nonce == nonces[message.messageType], "BridgeCommittee: Invalid nonce");
+
+        // verify message type
+        require(
+            message.messageType == Messages.BLOCKLIST,
+            "BridgeCommittee: message does not match type"
+        );
+
+        // compute message hash
+        bytes32 messageHash = Messages.getMessageHash(message);
+
+        // verify signatures
+        require(
+            verifyMessageSignatures(signatures, messageHash, BLOCKLIST_STAKE_REQUIRED),
+            "BridgeCommittee: Invalid signatures"
+        );
+
+        // decode the blocklist payload
+        (bool isBlocklisted, address[] memory _blocklist) = decodeBlocklistPayload(message.payload);
+
+        // update the blocklist
+        _updateBlocklist(_blocklist, isBlocklisted);
+
+        // increment message type nonce
+        nonces[Messages.BLOCKLIST]++;
+
+        // TODO: emit event
+    }
+
+    function upgradeCommitteeWithSignatures(
+        bytes[] memory signatures,
+        Messages.Message memory message
+    ) external {
+        // verify message type
+        require(
+            message.messageType == Messages.COMMITTEE_UPGRADE,
+            "BridgeCommittee: message does not match type"
+        );
+
+        // verify message type nonce
+        require(message.nonce == nonces[message.messageType], "BridgeCommittee: Invalid nonce");
+
+        // compute message hash
+        bytes32 messageHash = Messages.getMessageHash(message);
+
+        // verify signatures
+        require(
+            verifyMessageSignatures(signatures, messageHash, COMMITTEE_UPGRADE_STAKE_REQUIRED),
+            "BridgeCommittee: Invalid signatures"
+        );
+
+        // decode the upgrade payload
+        address implementationAddress = decodeUpgradePayload(message.payload);
+
+        // update the upgrade
+        _upgradeCommittee(implementationAddress);
+
+        // increment message type nonce
+        nonces[Messages.COMMITTEE_UPGRADE]++;
+
+        // TODO: emit event
+    }
+
+    /* ========== VIEW FUNCTIONS ========== */
+
+    function verifyMessageSignatures(
+        bytes[] memory signatures,
+        bytes32 messageHash,
+        uint16 requiredStake
+    ) public view override returns (bool) {
+        // Loop over the signatures and check if they are valid
+        uint16 approvalStake;
+        address signer;
+        for (uint16 i = 0; i < signatures.length; i++) {
+            bytes memory signature = signatures[i];
+            // Extract R, S, and V components from the signature
+            (bytes32 r, bytes32 s, uint8 v) = splitSignature(signature);
+
+            // Recover the signer address
+            signer = ecrecover(messageHash, v, r, s);
+
+            // Check if the signer is a committee member and not already approved
+            require(committee[signer] > 0, "BridgeCommittee: Not a committee member");
+
+            // If signer is block listed skip this signature
+            if (blocklist[signer]) continue;
+
+            approvalStake += committee[signer];
+        }
+
+        return approvalStake >= requiredStake;
+    }
+
+    /* ========== INTERNAL FUNCTIONS ========== */
+
+    function _updateBlocklist(address[] memory _blocklist, bool isBlocklisted) internal {
+        // check original blocklist value of each validator
+        for (uint16 i = 0; i < _blocklist.length; i++) {
+            blocklist[_blocklist[i]] = isBlocklisted;
+        }
+    }
+
+    function decodeBlocklistPayload(bytes memory payload)
+        public
+        pure
+        returns (bool, address[] memory)
+    {
+        (uint8 blocklistType, address[] memory validators) = abi.decode(payload, (uint8, address[]));
+        // blocklistType: 0 = blocklist, 1 = unblocklist
+        bool blocklisted = (blocklistType == 0) ? true : false;
+        return (blocklisted, validators);
+    }
+
+    function decodeUpgradePayload(bytes memory payload) public pure returns (address) {
+        (address implementationAddress) = abi.decode(payload, (address));
+        return implementationAddress;
+    }
+
+    // TODO:
+    function _authorizeUpgrade(address newImplementation) internal override {
+        // TODO: implement so only committee members can upgrade
+    }
+
+    // TODO: "self upgrading"
+    // note: do we want to use "upgradeToAndCall" instead?
+    function _upgradeCommittee(address upgradeImplementation)
+        internal
+        returns (bool, bytes memory)
+    {
+        // return upgradeTo(upgradeImplementation);
+    }
+
+    // TODO: see if can pull from OpenZeppelin
+    // Helper function to split a signature into R, S, and V components
+    function splitSignature(bytes memory sig)
+        internal
+        pure
+        returns (bytes32 r, bytes32 s, uint8 v)
+    {
+        require(sig.length == 65, "Invalid signature length");
+
+        assembly {
+            // first 32 bytes, after the length prefix
+            r := mload(add(sig, 32))
+            // second 32 bytes
+            s := mload(add(sig, 64))
+            // final byte (first byte of the next 32 bytes)
+            v := byte(0, mload(add(sig, 96)))
+        }
+    }
+
+    /* ========== EVENTS ========== */
+
+    event MessageProcessed(bytes message);
+}
