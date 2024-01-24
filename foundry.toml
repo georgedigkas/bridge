@@ -1,0 +1,10 @@
+[profile.default]
+src = 'contracts'
+test = 'test'
+no_match_test = "testMock"
+out = 'out'
+libs = ['lib']
+[fmt] 
+  line_length = 100
+[fuzz]
+  runs = 1000
