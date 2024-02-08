@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./interfaces/IBridgeTokens.sol";
@@ -7,12 +7,11 @@ import "./interfaces/IBridgeTokens.sol";
 /// @title BridgeTokens
 /// @dev This contract manages the supported tokens on the bridge.
 contract BridgeTokens is Ownable, IBridgeTokens {
-    // token id => token address
     mapping(uint8 tokenId => address tokenAddress) public supportedTokens;
 
     /// @dev Constructor function
     /// @param _supportedTokens An array of addresses representing the supported tokens
-    constructor(address[] memory _supportedTokens) Ownable() {
+    constructor(address[] memory _supportedTokens) Ownable(msg.sender) {
         for (uint8 i = 0; i < _supportedTokens.length; i++) {
             // skip 0 for SUI
             supportedTokens[i + 1] = _supportedTokens[i];
