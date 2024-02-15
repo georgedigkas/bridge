@@ -6,66 +6,71 @@ import "./interfaces/IBridgeCommittee.sol";
 import "./utils/CommitteeUpgradeable.sol";
 
 /// @title BridgeCommittee
-/// @dev A contract that manages a bridge committee for a bridge between two blockchains. The committee is responsible for approving and processing messages related to the bridge operations.
+/// @notice This contract manages the committee members of the SuiBridge. The committee members are
+/// responsible for signing messages used to update various bridge state including the committee itself.
+/// The contract also provides functions to manage a blocklist of committee members that are unable to
+/// sign valid messages.
 contract BridgeCommittee is IBridgeCommittee, CommitteeUpgradeable {
     /* ========== STATE VARIABLES ========== */
 
     uint8 public chainID;
-
-    mapping(address committeeMemberAddress => uint16 committeeMemberStakeAmount) public committeeStake;
-    mapping(address committeeMemberAddress => uint8 committeeMemberIndex) public committeeIndex;
-    mapping(address blocklistAddress => bool isBlocklisted) public blocklist;
+    mapping(address committeeMember => uint16 stakeAmount) public committeeStake;
+    mapping(address committeeMember => uint8 index) public committeeIndex;
+    mapping(address committeeMember => bool isBlocklisted) public blocklist;
 
     /* ========== INITIALIZER ========== */
 
-    /// @notice Initializes the contract with the deployer as the admin.
+    /// @notice Initializes the contract with the provided parameters.
     /// @dev should be called directly after deployment (see OpenZeppelin upgradeable standards).
-    function initialize(address[] memory _committeeMembers, uint16[] memory stake, uint8 _chainID)
+    /// the provided arrays must have the same length and the total stake provided must equal 10000.
+    /// @param _committee addresses of the committee members.
+    /// @param _stake amounts of the committee members.
+    /// @param _chainID used to identify the chain when validating messages.
+    function initialize(address[] memory _committee, uint16[] memory _stake, uint8 _chainID)
         external
         initializer
     {
         __CommitteeUpgradeable_init(address(this));
         __UUPSUpgradeable_init();
-        uint256 _committeeMembersArrayLength = _committeeMembers.length;
         require(
-            _committeeMembersArrayLength == stake.length,
+            _committee.length == _stake.length,
             "BridgeCommittee: Committee and stake arrays must be of the same length"
         );
 
         uint16 total_stake;
-        for (uint16 i; i < _committeeMembersArrayLength; i++) {
+        for (uint16 i; i < _committee.length; i++) {
             require(
-                committeeStake[_committeeMembers[i]] == 0,
-                "BridgeCommittee: Duplicate committee member"
+                committeeStake[_committee[i]] == 0, "BridgeCommittee: Duplicate committee member"
             );
-            committeeStake[_committeeMembers[i]] = stake[i];
-            committeeIndex[_committeeMembers[i]] = uint8(i);
-            total_stake += stake[i];
+            committeeStake[_committee[i]] = _stake[i];
+            committeeIndex[_committee[i]] = uint8(i);
+            total_stake += _stake[i];
         }
 
-        require(total_stake == 10000, "BridgeCommittee: Total stake must be 10000");
+        require(total_stake == 10000, "BridgeCommittee: Total stake must be 10000"); // 10000 == 100%
         chainID = _chainID;
     }
 
     /* ========== EXTERNAL FUNCTIONS ========== */
 
-    /// @dev Verifies the signatures of the given messages.
+    /// @notice Verifies the provided signatures for the given message by aggregating and validating the
+    /// stake of each signer against the required stake of the given message type.
+    /// @dev The function will revert if the total stake of the signers is less than the required stake.
     /// @param signatures The array of signatures to be verified.
-    /// @param message The message to be verified.
+    /// @param message The BridgeMessage to be verified.
     function verifySignatures(bytes[] memory signatures, BridgeMessage.Message memory message)
-        external
+        public
         view
         override
     {
-        uint256 signaturesArrayLength = signatures.length;
-        uint32 requiredStake = BridgeMessage.getRequiredStake(message);
+        uint32 requiredStake = BridgeMessage.requiredStake(message);
 
         uint16 approvalStake;
         address signer;
         uint256 bitmap;
 
-        // Loop over the signatures and check if they are valid
-        for (uint16 i = 0; i < signaturesArrayLength; i++) {
+        // Check validity of each signature and aggregate the approval stake
+        for (uint16 i; i < signatures.length; i++) {
             bytes memory signature = signatures[i];
             // recover the signer from the signature
             (bytes32 r, bytes32 s, uint8 v) = splitSignature(signature);
@@ -90,9 +95,9 @@ contract BridgeCommittee is IBridgeCommittee, CommitteeUpgradeable {
         require(approvalStake >= requiredStake, "BridgeCommittee: Insufficient stake amount");
     }
 
-    /// @dev Updates the blocklist with the provided signatures and message.
-    /// @param signatures The array of signatures for the message.
-    /// @param message The BridgeMessage containing the blocklist payload.
+    /// @notice Updates the blocklist status of the provided addresses if provided signatures are valid.
+    /// @param signatures The array of signatures to validate the message.
+    /// @param message BridgeMessage containing the update blocklist payload.
     function updateBlocklistWithSignatures(
         bytes[] memory signatures,
         BridgeMessage.Message memory message
@@ -111,32 +116,36 @@ contract BridgeCommittee is IBridgeCommittee, CommitteeUpgradeable {
 
     /* ========== INTERNAL FUNCTIONS ========== */
 
-    /// @dev Internal function to update the blocklist status of multiple addresses.
-    /// @param _blocklist The array of addresses to update the blocklist status for.
-    /// @param isBlocklisted The new blocklist status to set for the addresses.
-    function _updateBlocklist(address[] memory _blocklist, bool isBlocklisted) private {
+    /// @notice Updates the blocklist status of the provided addresses.
+    /// @param _blocklist The addresses to update the blocklist status.
+    /// @param _isBlocklisted new blocklist status.
+    function _updateBlocklist(address[] memory _blocklist, bool _isBlocklisted) internal {
         // check original blocklist value of each validator
-        for (uint16 i = 0; i < _blocklist.length; i++) {
-            blocklist[_blocklist[i]] = isBlocklisted;
+        for (uint16 i; i < _blocklist.length; i++) {
+            blocklist[_blocklist[i]] = _isBlocklisted;
         }
 
-        emit BlocklistUpdated(_blocklist, isBlocklisted);
+        emit BlocklistUpdated(_blocklist, _isBlocklisted);
     }
 
-    // Helper function to split a signature into R, S, and V components
-    function splitSignature(bytes memory sig)
-        private
+    /// @notice Splits the provided signature into its r, s, and v components.
+    /// @param _sig The signature to be split.
+    /// @return r The r component of the signature.
+    /// @return s The s component of the signature.
+    /// @return v The v component of the signature.
+    function splitSignature(bytes memory _sig)
+        internal
         pure
         returns (bytes32 r, bytes32 s, uint8 v)
     {
-        require(sig.length == 65, "BridgeCommittee: Invalid signature length");
+        require(_sig.length == 65, "BridgeCommittee: Invalid signature length");
         // ecrecover takes the signature parameters, and the only way to get them
         // currently is to use assembly.
         /// @solidity memory-safe-assembly
         assembly {
-            r := mload(add(sig, 32))
-            s := mload(add(sig, 64))
-            v := byte(0, mload(add(sig, 96)))
+            r := mload(add(_sig, 32))
+            s := mload(add(_sig, 64))
+            v := byte(0, mload(add(_sig, 96)))
         }
 
         //adjust for ethereum signature verification
